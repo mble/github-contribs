@@ -15,11 +15,12 @@ import (
 )
 
 type Config struct {
-	User        string
-	FromTime    string
-	ToTime      string
-	MaxRepos    int
-	RepoPattern string
+	User              string
+	FromTime          string
+	ToTime            string
+	MaxRepos          int
+	RepoPattern       string
+	OAuth2TokenSource oauth2.TokenSource
 }
 
 type PullRequestContributionsByRepository []struct {
@@ -68,12 +69,10 @@ type RepoStats struct {
 }
 
 func run(cfg *Config) error {
-	src := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
-	)
-	httpClient := oauth2.NewClient(context.Background(), src)
-
+	httpClient := oauth2.NewClient(context.Background(), cfg.OAuth2TokenSource)
 	client := githubv4.NewClient(httpClient)
+	repoPattern := cfg.RepoPattern
+	repoRegexp := regexp.MustCompile(repoPattern)
 
 	fromTime, err := time.Parse(time.RFC3339, cfg.FromTime)
 	if err != nil {
@@ -101,8 +100,6 @@ func run(cfg *Config) error {
 		return err
 	}
 
-	repoPattern := cfg.RepoPattern
-	repoRegexp := regexp.MustCompile(repoPattern)
 	repoStats := make(map[string]*RepoStats)
 
 	for _, commitContribs := range query.User.ContributionsCollection.CommitContributionsByRepository {
@@ -158,7 +155,9 @@ func run(cfg *Config) error {
 		totalReviews += v.PRReviews
 	}
 
+	table.SetFooterAlignment(2)
 	table.SetFooter([]string{"totals", fmt.Sprint(totalCommits), fmt.Sprint(totalPRs), fmt.Sprint(totalReviews)})
+	table.Render()
 
 	return nil
 }
@@ -172,6 +171,10 @@ func main() {
 	flag.IntVar(&cfg.MaxRepos, "max-repos", 25, "max repos to query")
 
 	flag.Parse()
+
+	cfg.OAuth2TokenSource = oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
+	)
 
 	err := run(cfg)
 	if err != nil {
