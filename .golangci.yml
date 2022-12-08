@@ -1,0 +1,18 @@
+run:
+  deadline: 1m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosec
+    - goconst
+    - goimports
+    - revive
+    - govet
+    - ineffassign
+    - gosimple
+    - unconvert
+    - tagliatelle
+    - wsl
+  fast: false

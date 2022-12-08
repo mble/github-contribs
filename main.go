@@ -15,10 +15,11 @@ import (
 )
 
 type Config struct {
-	User     string
-	FromTime string
-	ToTime   string
-	MaxRepos int
+	User        string
+	FromTime    string
+	ToTime      string
+	MaxRepos    int
+	RepoPattern string
 }
 
 type PullRequestContributionsByRepository []struct {
@@ -63,7 +64,7 @@ type User struct {
 type RepoStats struct {
 	Commits   int `json:"commits"`
 	PRs       int `json:"prs"`
-	PRReviews int `json:"pr_reviews"`
+	PRReviews int `json:"prReviews"`
 }
 
 func run(cfg *Config) error {
@@ -78,16 +79,19 @@ func run(cfg *Config) error {
 	if err != nil {
 		return err
 	}
+
 	toTime, err := time.Parse(time.RFC3339, cfg.ToTime)
 	if err != nil {
 		return err
 	}
+
 	variables := map[string]interface{}{
 		"user":     githubv4.String(cfg.User),
 		"maxRepos": githubv4.Int(cfg.MaxRepos),
 		"fromTime": githubv4.DateTime{Time: fromTime},
 		"toTime":   githubv4.DateTime{Time: toTime},
 	}
+
 	var query struct {
 		User User `graphql:"user(login: $user)"`
 	}
@@ -97,27 +101,24 @@ func run(cfg *Config) error {
 		return err
 	}
 
-	repoPattern := "(heroku|salesforce)/.*"
+	repoPattern := cfg.RepoPattern
 	repoRegexp := regexp.MustCompile(repoPattern)
-
 	repoStats := make(map[string]*RepoStats)
+
 	for _, commitContribs := range query.User.ContributionsCollection.CommitContributionsByRepository {
 		key := string(commitContribs.Repository.NameWithOwner)
 		match := repoRegexp.MatchString(key)
-		if err != nil {
-			return err
-		}
+
 		if match {
 			repoStats[key] = &RepoStats{}
 			repoStats[key].Commits += int(commitContribs.Contributions.TotalCount)
 		}
 	}
+
 	for _, prContribs := range query.User.ContributionsCollection.PullRequestContributionsByRepository {
 		key := string(prContribs.Repository.NameWithOwner)
 		match := repoRegexp.MatchString(key)
-		if err != nil {
-			return err
-		}
+
 		if match {
 			if rc2, ok := repoStats[key]; ok {
 				rc2.PRs += int(prContribs.Contributions.TotalCount)
@@ -127,12 +128,11 @@ func run(cfg *Config) error {
 			}
 		}
 	}
+
 	for _, reviewContribs := range query.User.ContributionsCollection.PullRequestReviewContributionsByRepository {
 		key := string(reviewContribs.Repository.NameWithOwner)
 		match := repoRegexp.MatchString(key)
-		if err != nil {
-			return err
-		}
+
 		if match {
 			if rc2, ok := repoStats[key]; ok {
 				rc2.PRReviews += int(reviewContribs.Contributions.TotalCount)
@@ -146,18 +146,20 @@ func run(cfg *Config) error {
 	totalCommits := 0
 	totalPRs := 0
 	totalReviews := 0
+	table := tablewriter.NewWriter(os.Stdout)
 
 	fmt.Printf("User: %s\nName: %s\nStart: %s\nStop: %s\n", cfg.User, query.User.Name, cfg.FromTime, cfg.ToTime)
-	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"repo", "commits", "prs", "pr_reviews"})
+
 	for k, v := range repoStats {
 		table.Append([]string{k, fmt.Sprint(v.Commits), fmt.Sprint(v.PRs), fmt.Sprint(v.PRReviews)})
 		totalCommits += v.Commits
 		totalPRs += v.PRs
 		totalReviews += v.PRReviews
 	}
+
 	table.SetFooter([]string{"totals", fmt.Sprint(totalCommits), fmt.Sprint(totalPRs), fmt.Sprint(totalReviews)})
-	table.Render()
+
 	return nil
 }
 
@@ -166,6 +168,7 @@ func main() {
 	flag.StringVar(&cfg.User, "user", "mble-sfdc", "user to query stats for")
 	flag.StringVar(&cfg.FromTime, "since", time.Now().Add(-time.Hour*24*30).Format(time.RFC3339), "RFC3339 timestamp to start query from")
 	flag.StringVar(&cfg.ToTime, "until", time.Now().Format(time.RFC3339), "RFC3339 timestamp to start query until")
+	flag.StringVar(&cfg.RepoPattern, "pattern", ".*", "Go regexp to restrict counted repos")
 	flag.IntVar(&cfg.MaxRepos, "max-repos", 25, "max repos to query")
 
 	flag.Parse()
