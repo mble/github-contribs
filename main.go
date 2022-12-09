@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mble/github-contribs/query"
 	"github.com/olekukonko/tablewriter"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
@@ -23,49 +24,6 @@ type Config struct {
 	MaxRepos          int
 	RepoPattern       string
 	OAuth2TokenSource oauth2.TokenSource
-}
-
-type PullRequestContributionsByRepository []struct {
-	Repository struct {
-		NameWithOwner githubv4.String
-	}
-	Contributions struct {
-		TotalCount githubv4.Int
-	}
-}
-
-type PullRequestReviewContributionsByRepository []struct {
-	Repository struct {
-		NameWithOwner githubv4.String
-	}
-	Contributions struct {
-		TotalCount githubv4.Int
-	}
-}
-
-type CommitContributionsByRepository []struct {
-	Repository struct {
-		NameWithOwner githubv4.String
-	}
-	Contributions struct {
-		TotalCount githubv4.Int
-	}
-}
-
-type ContributionsCollection struct {
-	CommitContributionsByRepository            CommitContributionsByRepository            `graphql:"commitContributionsByRepository(maxRepositories: $maxRepos)"`
-	PullRequestContributionsByRepository       PullRequestContributionsByRepository       `graphql:"pullRequestContributionsByRepository(maxRepositories: $maxRepos)"`
-	PullRequestReviewContributionsByRepository PullRequestReviewContributionsByRepository `graphql:"pullRequestReviewContributionsByRepository(maxRepositories: $maxRepos)"`
-}
-
-type User struct {
-	Login                   githubv4.String
-	Name                    githubv4.String
-	ContributionsCollection ContributionsCollection `graphql:"contributionsCollection(from: $fromTime, to: $toTime)"`
-}
-
-type QueryRoot struct {
-	User User `graphql:"user(login: $user)"`
 }
 
 type RepoStats struct {
@@ -82,12 +40,10 @@ type UserStats struct {
 	RepoStatsMap RepoStatsMap
 }
 
-type QueryVariables map[string]interface{}
-
-func aggregateContributions(userStats UserStats, query QueryRoot, repoRegexp *regexp.Regexp) {
+func aggregateContributions(userStats UserStats, q query.Root, repoRegexp *regexp.Regexp) {
 	statsMap := userStats.RepoStatsMap
 
-	for _, commitContribs := range query.User.ContributionsCollection.CommitContributionsByRepository {
+	for _, commitContribs := range q.User.ContributionsCollection.CommitContributionsByRepository {
 		key := string(commitContribs.Repository.NameWithOwner)
 		match := repoRegexp.MatchString(key)
 
@@ -97,7 +53,7 @@ func aggregateContributions(userStats UserStats, query QueryRoot, repoRegexp *re
 		}
 	}
 
-	for _, prContribs := range query.User.ContributionsCollection.PullRequestContributionsByRepository {
+	for _, prContribs := range q.User.ContributionsCollection.PullRequestContributionsByRepository {
 		key := string(prContribs.Repository.NameWithOwner)
 		match := repoRegexp.MatchString(key)
 
@@ -111,7 +67,7 @@ func aggregateContributions(userStats UserStats, query QueryRoot, repoRegexp *re
 		}
 	}
 
-	for _, reviewContribs := range query.User.ContributionsCollection.PullRequestReviewContributionsByRepository {
+	for _, reviewContribs := range q.User.ContributionsCollection.PullRequestReviewContributionsByRepository {
 		key := string(reviewContribs.Repository.NameWithOwner)
 		match := repoRegexp.MatchString(key)
 
@@ -165,22 +121,22 @@ func run(cfg *Config) error {
 
 	stats := make([]UserStats, len(cfg.Users))
 
-	g, _ := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(context.Background())
 
 	for idx, user := range cfg.Users {
 		idx, user := idx, user
+		variables := map[string]interface{}{
+			"user":     githubv4.String(user),
+			"maxRepos": githubv4.Int(cfg.MaxRepos),
+			"fromTime": githubv4.DateTime{Time: fromTime},
+			"toTime":   githubv4.DateTime{Time: toTime},
+		}
 
 		g.Go(func() error {
-			variables := map[string]interface{}{
-				"user":     githubv4.String(user),
-				"maxRepos": githubv4.Int(cfg.MaxRepos),
-				"fromTime": githubv4.DateTime{Time: fromTime},
-				"toTime":   githubv4.DateTime{Time: toTime},
-			}
 
-			var query QueryRoot
+			var query query.Root
 
-			err = client.Query(context.Background(), &query, variables)
+			err = client.Query(ctx, &query, variables)
 			if err != nil {
 				return err
 			}
