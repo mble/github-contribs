@@ -62,10 +62,79 @@ type User struct {
 	ContributionsCollection ContributionsCollection `graphql:"contributionsCollection(from: $fromTime, to: $toTime)"`
 }
 
+type QueryRoot struct {
+	User User `graphql:"user(login: $user)"`
+}
+
 type RepoStats struct {
 	Commits   int `json:"commits"`
 	PRs       int `json:"prs"`
 	PRReviews int `json:"prReviews"`
+}
+
+type QueryVariables map[string]interface{}
+
+type RepoStatsMap map[string]*RepoStats
+
+func aggregateContributions(statsMap RepoStatsMap, query QueryRoot, repoRegexp *regexp.Regexp) {
+	for _, commitContribs := range query.User.ContributionsCollection.CommitContributionsByRepository {
+		key := string(commitContribs.Repository.NameWithOwner)
+		match := repoRegexp.MatchString(key)
+
+		if match {
+			statsMap[key] = &RepoStats{}
+			statsMap[key].Commits += int(commitContribs.Contributions.TotalCount)
+		}
+	}
+
+	for _, prContribs := range query.User.ContributionsCollection.PullRequestContributionsByRepository {
+		key := string(prContribs.Repository.NameWithOwner)
+		match := repoRegexp.MatchString(key)
+
+		if match {
+			if rc2, ok := statsMap[key]; ok {
+				rc2.PRs += int(prContribs.Contributions.TotalCount)
+			} else {
+				statsMap[key] = &RepoStats{}
+				statsMap[key].PRs += int(prContribs.Contributions.TotalCount)
+			}
+		}
+	}
+
+	for _, reviewContribs := range query.User.ContributionsCollection.PullRequestReviewContributionsByRepository {
+		key := string(reviewContribs.Repository.NameWithOwner)
+		match := repoRegexp.MatchString(key)
+
+		if match {
+			if rc2, ok := statsMap[key]; ok {
+				rc2.PRReviews += int(reviewContribs.Contributions.TotalCount)
+			} else {
+				statsMap[key] = &RepoStats{}
+				statsMap[key].PRReviews += int(reviewContribs.Contributions.TotalCount)
+			}
+		}
+	}
+}
+
+func renderTable(statsMap RepoStatsMap, cfg *Config, userName githubv4.String) {
+	totalCommits := 0
+	totalPRs := 0
+	totalReviews := 0
+	table := tablewriter.NewWriter(os.Stdout)
+
+	fmt.Printf("User: %s\nName: %s\nStart: %s\nStop: %s\n", cfg.User, userName, cfg.FromTime, cfg.ToTime)
+	table.SetHeader([]string{"repo", "commits", "prs", "pr_reviews"})
+
+	for k, v := range statsMap {
+		table.Append([]string{k, fmt.Sprint(v.Commits), fmt.Sprint(v.PRs), fmt.Sprint(v.PRReviews)})
+		totalCommits += v.Commits
+		totalPRs += v.PRs
+		totalReviews += v.PRReviews
+	}
+
+	table.SetFooterAlignment(2)
+	table.SetFooter([]string{"totals", fmt.Sprint(totalCommits), fmt.Sprint(totalPRs), fmt.Sprint(totalReviews)})
+	table.Render()
 }
 
 func run(cfg *Config) error {
@@ -91,9 +160,7 @@ func run(cfg *Config) error {
 		"toTime":   githubv4.DateTime{Time: toTime},
 	}
 
-	var query struct {
-		User User `graphql:"user(login: $user)"`
-	}
+	var query QueryRoot
 
 	err = client.Query(context.Background(), &query, variables)
 	if err != nil {
@@ -102,62 +169,9 @@ func run(cfg *Config) error {
 
 	repoStats := make(map[string]*RepoStats)
 
-	for _, commitContribs := range query.User.ContributionsCollection.CommitContributionsByRepository {
-		key := string(commitContribs.Repository.NameWithOwner)
-		match := repoRegexp.MatchString(key)
+	aggregateContributions(repoStats, query, repoRegexp)
 
-		if match {
-			repoStats[key] = &RepoStats{}
-			repoStats[key].Commits += int(commitContribs.Contributions.TotalCount)
-		}
-	}
-
-	for _, prContribs := range query.User.ContributionsCollection.PullRequestContributionsByRepository {
-		key := string(prContribs.Repository.NameWithOwner)
-		match := repoRegexp.MatchString(key)
-
-		if match {
-			if rc2, ok := repoStats[key]; ok {
-				rc2.PRs += int(prContribs.Contributions.TotalCount)
-			} else {
-				repoStats[key] = &RepoStats{}
-				repoStats[key].PRs += int(prContribs.Contributions.TotalCount)
-			}
-		}
-	}
-
-	for _, reviewContribs := range query.User.ContributionsCollection.PullRequestReviewContributionsByRepository {
-		key := string(reviewContribs.Repository.NameWithOwner)
-		match := repoRegexp.MatchString(key)
-
-		if match {
-			if rc2, ok := repoStats[key]; ok {
-				rc2.PRReviews += int(reviewContribs.Contributions.TotalCount)
-			} else {
-				repoStats[key] = &RepoStats{}
-				repoStats[key].PRReviews += int(reviewContribs.Contributions.TotalCount)
-			}
-		}
-	}
-
-	totalCommits := 0
-	totalPRs := 0
-	totalReviews := 0
-	table := tablewriter.NewWriter(os.Stdout)
-
-	fmt.Printf("User: %s\nName: %s\nStart: %s\nStop: %s\n", cfg.User, query.User.Name, cfg.FromTime, cfg.ToTime)
-	table.SetHeader([]string{"repo", "commits", "prs", "pr_reviews"})
-
-	for k, v := range repoStats {
-		table.Append([]string{k, fmt.Sprint(v.Commits), fmt.Sprint(v.PRs), fmt.Sprint(v.PRReviews)})
-		totalCommits += v.Commits
-		totalPRs += v.PRs
-		totalReviews += v.PRReviews
-	}
-
-	table.SetFooterAlignment(2)
-	table.SetFooter([]string{"totals", fmt.Sprint(totalCommits), fmt.Sprint(totalPRs), fmt.Sprint(totalReviews)})
-	table.Render()
+	renderTable(repoStats, cfg, query.User.Name)
 
 	return nil
 }
