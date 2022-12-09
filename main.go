@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 )
 
 type Config struct {
+	Team              string
 	Users             []string
 	FromTime          string
 	ToTime            string
@@ -119,11 +121,30 @@ func run(cfg *Config) error {
 		return err
 	}
 
-	stats := make([]UserStats, len(cfg.Users))
+	var orgQuery query.Org
 
+	orgTeam := strings.Split(cfg.Team, "/")
+	variables := map[string]interface{}{
+		"org":  githubv4.String(orgTeam[0]),
+		"team": githubv4.String(orgTeam[1]),
+	}
+
+	err = client.Query(context.Background(), &orgQuery, variables)
+	if err != nil {
+		return err
+	}
+
+	members := []string{}
+	for _, member := range orgQuery.Organization.Team.Members.Nodes {
+		members = append(members, string(member.Login))
+	}
+
+	sort.SliceStable(members, func(i, j int) bool { return members[i] < members[j] })
+
+	stats := make([]UserStats, len(members))
 	g, ctx := errgroup.WithContext(context.Background())
 
-	for idx, user := range cfg.Users {
+	for idx, user := range members {
 		idx, user := idx, user
 		variables := map[string]interface{}{
 			"user":     githubv4.String(user),
@@ -170,13 +191,22 @@ func main() {
 
 	var users string
 
-	flag.StringVar(&users, "users", "mble-sfdc", "comma-separated list of users to query")
+	flag.StringVar(&cfg.Team, "team", "", "GitHub team in org/team-slug format. Mutally exclusive with -users")
+	flag.StringVar(&users, "users", "", "comma-separated list of users to query. Mutually exclusive with -team")
 	flag.StringVar(&cfg.FromTime, "since", time.Now().Add(-time.Hour*24*30).Format(time.RFC3339), "RFC3339 timestamp to start query from")
 	flag.StringVar(&cfg.ToTime, "until", time.Now().Format(time.RFC3339), "RFC3339 timestamp to start query until")
 	flag.StringVar(&cfg.RepoPattern, "pattern", ".*", "Go regexp to restrict counted repos")
 	flag.IntVar(&cfg.MaxRepos, "max-repos", 25, "max repos to query")
 
 	flag.Parse()
+
+	if users != "" && cfg.Team != "" {
+		log.Fatalln("FATAL: cannot pass in both teams and a user list.")
+	}
+
+	if users == "" && cfg.Team == "" {
+		log.Fatalln("FATAL: must pass in either a user list or a team.")
+	}
 
 	cfg.Users = strings.Split(users, ",")
 	cfg.OAuth2TokenSource = oauth2.StaticTokenSource(

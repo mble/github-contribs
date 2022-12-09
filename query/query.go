@@ -46,3 +46,24 @@ type User struct {
 type Root struct {
 	User User `graphql:"user(login: $user)"`
 }
+
+type TeamMember struct {
+	Login githubv4.String
+}
+
+type Members struct {
+	Nodes []TeamMember `graphql:"nodes"`
+}
+type Team struct {
+	Members Members
+}
+
+type Organization struct {
+	Login githubv4.String
+	Name  githubv4.String
+	Team  Team `graphql:"team(slug: $team)"`
+}
+
+type Org struct {
+	Organization Organization `graphql:"organization(login: $org)"`
+}
