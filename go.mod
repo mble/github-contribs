@@ -6,6 +6,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/shurcooL/githubv4 v0.0.0-20221203213311-70889c5dac07
 	golang.org/x/oauth2 v0.3.0
+	golang.org/x/sync v0.1.0
 )
 
 require (
