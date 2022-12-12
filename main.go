@@ -122,22 +122,29 @@ func run(cfg *Config) error {
 		return err
 	}
 
-	var orgQuery query.Org
-
-	orgTeam := strings.Split(cfg.Team, "/")
-	variables := map[string]interface{}{
-		"org":  githubv4.String(orgTeam[0]),
-		"team": githubv4.String(orgTeam[1]),
-	}
-
-	err = client.Query(context.Background(), &orgQuery, variables)
-	if err != nil {
-		return err
-	}
-
 	members := []string{}
-	for _, member := range orgQuery.Organization.Team.Members.Nodes {
-		members = append(members, string(member.Login))
+
+	if cfg.Team != "" {
+		var orgQuery query.Org
+
+		orgTeam := strings.Split(cfg.Team, "/")
+		variables := map[string]interface{}{
+			"org":  githubv4.String(orgTeam[0]),
+			"team": githubv4.String(orgTeam[1]),
+		}
+
+		err = client.Query(context.Background(), &orgQuery, variables)
+		if err != nil {
+			return err
+		}
+
+		for _, member := range orgQuery.Organization.Team.Members.Nodes {
+			members = append(members, string(member.Login))
+		}
+	}
+
+	if len(cfg.Users) > 0 {
+		members = cfg.Users
 	}
 
 	sort.SliceStable(members, func(i, j int) bool { return members[i] < members[j] })
@@ -209,7 +216,10 @@ func main() {
 		log.Fatalln("FATAL: must pass in either a user list or a team.")
 	}
 
-	cfg.Users = strings.Split(users, ",")
+	if users != "" {
+		cfg.Users = strings.Split(users, ",")
+	}
+
 	cfg.OAuth2TokenSource = oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
 	)
