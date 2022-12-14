@@ -100,7 +100,7 @@ func renderTable(userStats UserStats, cfg *Config) {
 		totalReviews += v.PRReviews
 	}
 
-	table.SetColMinWidth(0, 45)
+	table.SetColMinWidth(0, 55)
 	table.SetFooterAlignment(2)
 	table.SetFooter([]string{"totals", fmt.Sprint(totalCommits), fmt.Sprint(totalPRs), fmt.Sprint(totalReviews)})
 	table.Render()
