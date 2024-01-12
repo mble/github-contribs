@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,7 @@ type Config struct {
 	ToTime            string
 	MaxRepos          int
 	RepoPattern       string
+	OutputCSV         bool
 	OAuth2TokenSource oauth2.TokenSource
 }
 
@@ -104,6 +107,27 @@ func renderTable(userStats UserStats, cfg *Config) {
 	table.SetFooterAlignment(2)
 	table.SetFooter([]string{"totals", fmt.Sprint(totalCommits), fmt.Sprint(totalPRs), fmt.Sprint(totalReviews)})
 	table.Render()
+}
+
+func renderCSV(out *csv.Writer, userStats UserStats, cfg *Config) error {
+	for k, v := range userStats.RepoStatsMap {
+		err := out.Write([]string{
+			userStats.Login,
+			userStats.Name,
+			k,
+			strconv.Itoa(v.Commits),
+			strconv.Itoa(v.PRs),
+			strconv.Itoa(v.PRReviews),
+			cfg.FromTime,
+			cfg.ToTime,
+		})
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func run(cfg *Config) error {
@@ -187,6 +211,25 @@ func run(cfg *Config) error {
 		return err
 	}
 
+	if cfg.OutputCSV {
+		out := csv.NewWriter(os.Stdout)
+		defer out.Flush()
+
+		err := out.Write([]string{"user", "full_name", "repo", "commits", "prs", "pr_reviews", "from_time", "to_time"})
+		if err != nil {
+			return err
+		}
+
+		for _, stat := range stats {
+			err := renderCSV(out, stat, cfg)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
 	for _, stat := range stats {
 		renderTable(stat, cfg)
 	}
@@ -205,6 +248,7 @@ func main() {
 	flag.StringVar(&cfg.ToTime, "until", time.Now().Format(time.RFC3339), "RFC3339 timestamp to start query until")
 	flag.StringVar(&cfg.RepoPattern, "pattern", ".*", "Go regexp to restrict counted repos")
 	flag.IntVar(&cfg.MaxRepos, "max-repos", 25, "max repos to query")
+	flag.BoolVar(&cfg.OutputCSV, "csv", false, "output results as a CSV")
 
 	flag.Parse()
 
